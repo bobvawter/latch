@@ -1,0 +1,29 @@
+branches:
+  only:
+    - main
+    - /^v\d+\.\d+(\.\d+)?(-\S*)?$/
+
+language: go
+
+go:
+  - 1.x
+  - 1.15.x
+  - 1.14.x
+  - 1.13.x
+
+arch:
+  - arm64
+  - amd64
+
+os:
+  - linux
+
+cache:
+  directories:
+    - $(go env GOCACHE)
+    - $(go env GOPATH)/pkg/mod
+
+script: make testrace
+
+after_success:
+  - bash <(curl -s https://codecov.io/bash)
