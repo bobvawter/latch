@@ -14,9 +14,11 @@
 package latch
 
 import (
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -38,6 +40,52 @@ func Benchmark(b *testing.B) {
 			}
 		})
 	})
+}
+
+// This example shows how a [Counter] can be used in a manner
+// similar to a [sync.WaitGroup], but where the total number of
+// sub-processes is unknown to the parent process.
+func ExampleCounter_hierarchy() {
+	// The "work" will be to increment this value; it's not relevant to
+	// the use of the latch.
+	var dummyWork int32
+
+	// Latches must be constructed, the zero value isn't useful.
+	latch := New()
+
+	// Spawn a number of child goroutines.
+	for i := 0; i < 10; i++ {
+		latch.Hold()
+		go func() {
+			defer latch.Release()
+			// Do work.
+			atomic.AddInt32(&dummyWork, 1)
+
+			// Spawn grand-children goroutines.
+			for j := 0; j < 10; j++ {
+				latch.Hold()
+				go func() {
+					defer latch.Release()
+					// Do more work.
+					atomic.AddInt32(&dummyWork, 1)
+				}()
+			}
+		}()
+	}
+
+	// The top level code can wait for the unknown number of child
+	// routines to finish.  Since the API is channel-based, it can be
+	// combined with select statements for conditional flow control.
+	select {
+	case <-latch.Wait():
+		fmt.Printf("%d processes ran, with %d holds pending",
+			atomic.LoadInt32(&dummyWork), latch.Count())
+	case <-time.After(time.Second):
+		fmt.Println("Timed out")
+	}
+
+	// Output:
+	// 110 processes ran, with 0 holds pending
 }
 
 func TestWait(t *testing.T) {
