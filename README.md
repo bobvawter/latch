@@ -1,7 +1,7 @@
 # A Counting Latch
 
-[![Build Status](https://travis-ci.com/bobvawter/latch.svg?branch=main)](https://travis-ci.com/bobvawter/latch)
-[![codecov](https://codecov.io/gh/bobvawter/latch/branch/main/graph/badge.svg)](https://codecov.io/gh/bobvawter/latch)
+[![Golang](https://github.com/bobvawter/latch/actions/workflows/golang.yaml/badge.svg)](https://github.com/bobvawter/latch/actions/workflows/golang.yaml)
+[![codecov](https://codecov.io/github/bobvawter/latch/branch/main/graph/badge.svg?token=3lUp406eyx)](https://codecov.io/github/bobvawter/latch)
 [![PkgGoDev](https://pkg.go.dev/badge/github.com/bobvawter/latch)](https://pkg.go.dev/github.com/bobvawter/latch)
 
 This package contains a notification-based, counter latch. This is

@@ -1,0 +1,57 @@
+name: Golang
+permissions:
+  contents: read
+on:
+  schedule:
+    # Run weekly
+    - cron: '42 5 * * MON'
+  push:
+    branches: [ main ]
+    tags: [ 'v*.*.*' ]
+    paths:
+      - 'go.mod'
+      - 'go.sum'
+      - '**/*.go'
+      - '.github/workflows/golang.yaml'
+  pull_request:
+    paths:
+      - 'go.mod'
+      - 'go.sum'
+      - '**/*.go'
+      - '.github/workflows/golang.yaml'
+
+jobs:
+  build:
+    name: Test ${{ matrix.go-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [ "stable", "oldstable" ]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          cache: true
+          check-latest: true
+          go-version: ${{ matrix.go-version }}
+
+      - name: Download modules
+        run: go mod download
+
+      - name: go generate returns nothing
+        run: |
+          DELTA=$(go generate ./tools.go) || exit 1
+          echo $DELTA
+          test -z "$DELTA"
+
+      - name: Test
+        if: ${{ always() }}
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.out

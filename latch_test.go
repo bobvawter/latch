@@ -14,11 +14,9 @@
 package latch
 
 import (
-	"testing"
-
 	"sync"
-
 	"sync/atomic"
+	"testing"
 
 	"github.com/stretchr/testify/assert"
 )

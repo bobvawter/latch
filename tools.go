@@ -11,11 +11,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//+build tools
+//go:build tools
+
+//go:generate go run github.com/cockroachdb/crlfmt -w -ignore _gen.go .
+//go:generate go run golang.org/x/lint/golint -set_exit_status ./...
+//go:generate go run honnef.co/go/tools/cmd/staticcheck -checks all ./...
 
 package main
 
 import (
+	_ "github.com/cockroachdb/crlfmt"
 	_ "golang.org/x/lint/golint"
 	_ "honnef.co/go/tools/cmd/staticcheck"
 )
