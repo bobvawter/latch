@@ -20,9 +20,20 @@ import (
 	"sync/atomic"
 )
 
+// https://github.com/golang/go/issues/8005#issuecomment-190753527
+type noCopy struct{}
+
+func (*noCopy) Lock() {}
+
+type waiter struct {
+	addHolds    int               // Must be >= 0
+	notify      chan<- WaitStatus // Capacity 1
+	leaveLocked bool
+}
+
 // Counter is conceptually similar to a sync.WaitGroup, except that it
-// does not require foreknowledge of how many tasks there will be and it
-// uses a notification-style API. That it, it can count both up and
+// does not require foreknowledge of how many tasks there will be, and
+// it uses a notification-style API. That it, it can count both up and
 // down.
 //
 // It is always valid to add or remove holds on the Counter, regardless
@@ -38,10 +49,14 @@ import (
 //
 // A Counter should not be copied.
 type Counter struct {
-	cond   *sync.Cond
 	atomic struct {
 		count int64
 	}
+	mu struct {
+		sync.Locker
+		waiters []*waiter
+	}
+	noCopy noCopy
 }
 
 // New constructs a Counter using the provided options.
@@ -49,11 +64,11 @@ func New(options ...*Option) *Counter {
 	ret := &Counter{}
 	for _, opt := range options {
 		if opt.locker != nil {
-			ret.cond = sync.NewCond(opt.locker)
+			ret.mu.Locker = opt.locker
 		}
 	}
-	if ret.cond == nil {
-		ret.cond = sync.NewCond(&sync.Mutex{})
+	if ret.mu.Locker == nil {
+		ret.mu.Locker = &sync.Mutex{}
 	}
 	return ret
 }
@@ -88,7 +103,7 @@ func (l *Counter) Hold() {
 // This has the effect of blocking all other uses of the Counter
 // until a call to Unlock is made.
 func (l *Counter) Lock() {
-	l.cond.L.Lock()
+	l.mu.Lock()
 }
 
 // Release decrements the use-count by 1.
@@ -100,7 +115,9 @@ func (l *Counter) Release() {
 
 // Unlock will unlock the underlying sync.Locker used by the Counter.
 func (l *Counter) Unlock() {
-	l.cond.L.Unlock()
+	if l.maybeNotifyLocked() {
+		l.mu.Unlock()
+	}
 }
 
 // Wait returns a channel that will emit a single value once the wait
@@ -140,9 +157,48 @@ func (l *Counter) applyLocked(delta int) {
 	if res < 0 {
 		panic(errors.New("latch was over-released"))
 	}
-	if res == 0 {
-		l.cond.Broadcast()
+}
+
+// maybeNotifyLocked will drain waiters until it encounters a
+// non-trivial waiter. A non-trivial waiter is one with a non-zero
+// delta, or a request to leave the Counter in a locked state.
+//
+// This method will return true if the Locker should be unlocked.
+func (l *Counter) maybeNotifyLocked() (unlock bool) {
+	unlock = true
+
+	holds := atomic.LoadInt64(&l.atomic.count)
+	if holds != 0 {
+		return
 	}
+
+	for len(l.mu.waiters) > 0 {
+		earlyExit := false
+		status := delayed
+
+		// Dequeue.
+		wake := l.mu.waiters[0]
+		l.mu.waiters[0] = nil
+		l.mu.waiters = l.mu.waiters[1:]
+
+		if wake.addHolds > 0 {
+			atomic.AddInt64(&l.atomic.count, int64(wake.addHolds))
+			earlyExit = true
+		}
+		if wake.leaveLocked {
+			earlyExit = true
+			status = status.locked()
+			unlock = false
+		}
+
+		wake.notify <- status
+		close(wake.notify)
+
+		if earlyExit {
+			return
+		}
+	}
+	return
 }
 
 func (l *Counter) wait(leaveLocked bool, delta int) <-chan WaitStatus {
@@ -155,23 +211,21 @@ func (l *Counter) wait(leaveLocked bool, delta int) <-chan WaitStatus {
 		return ch
 	}
 
+	w := &waiter{
+		addHolds:    delta,
+		notify:      ch,
+		leaveLocked: leaveLocked,
+	}
+
 	l.Lock()
-	go func() {
-		var waited WaitStatus
-		for l.Count() > 0 {
-			waited = delayed
-			l.cond.Wait()
-		}
-		if delta != 0 {
-			l.applyLocked(delta)
-		}
-		if leaveLocked {
-			waited = waited.locked()
-		} else {
-			l.Unlock()
-		}
-		ch <- waited
+	// Slower path: Immediately notify if the count is currently 0.
+	if leaveLocked && atomic.CompareAndSwapInt64(&l.atomic.count, 0, int64(delta)) {
+		ch <- locked
 		close(ch)
-	}()
+		return ch
+	}
+	l.mu.waiters = append(l.mu.waiters, w)
+	l.Unlock()
+
 	return ch
 }
