@@ -8,4 +8,5 @@ This package contains a notification-based, counter latch. This is
 conceptually similar to a `sync.WaitGroup`, except that it does not
 require foreknowledge of the total number of tasks that will be tracked.
 
-The API is stable and semantically versioned.
+The API is stable and semantically versioned. The implementation depends
+only on the standard library.

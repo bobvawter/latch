@@ -28,7 +28,9 @@ func Benchmark(b *testing.B) {
 		l := New()
 		for i := 0; i < b.N; i++ {
 			l.Hold()
+			ch := l.Wait()
 			l.Release()
+			<-ch
 		}
 	})
 	b.Run("parallel", func(b *testing.B) {
@@ -36,7 +38,9 @@ func Benchmark(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				l.Hold()
+				ch := l.Wait()
 				l.Release()
+				<-ch
 			}
 		})
 	})
@@ -88,6 +92,15 @@ func ExampleCounter_hierarchy() {
 	// 110 processes ran, with 0 holds pending
 }
 
+func TestForCoverage(t *testing.T) {
+	New().noCopy.Lock()
+}
+
+func TestOverRelease(t *testing.T) {
+	a := assert.New(t)
+	a.PanicsWithError("latch was over-released", func() { New().Release() })
+}
+
 func TestWait(t *testing.T) {
 	a := assert.New(t)
 
@@ -121,6 +134,56 @@ func TestWaitHold(t *testing.T) {
 	})
 }
 
+// TestWaitQueuing ensures deterministic notification behavior.
+func TestWaitQueuing(t *testing.T) {
+	a := assert.New(t)
+	l := New()
+
+	immediateTrivial := l.Wait()
+	a.NotEmpty(immediateTrivial)
+	a.Empty(l.mu.waiters)
+
+	immediateLocked := l.WaitLock()
+	a.NotEmpty(immediateLocked)
+	a.Empty(l.mu.waiters)
+	l.Unlock()
+
+	l.Hold()
+
+	trivial1 := l.Wait()
+	holder2 := l.WaitHold(1)
+	trivial3 := l.Wait()
+	locker4 := l.WaitLock()
+	trivial5 := l.Wait()
+	a.Len(l.mu.waiters, 5)
+
+	go l.Release()
+
+	<-trivial1
+	<-holder2
+	l.Lock()
+	a.Empty(trivial3)
+	a.Empty(locker4)
+	a.Empty(trivial5)
+	a.Len(l.mu.waiters, 3)
+	l.Unlock()
+
+	go l.Release()
+
+	<-trivial3
+	<-locker4
+	// We know that the counter is locked at this point.
+	a.Empty(trivial5)
+	a.Len(l.mu.waiters, 1)
+
+	go l.Unlock()
+
+	<-trivial5
+	l.Lock()
+	a.Empty(l.mu.waiters)
+	l.Unlock()
+}
+
 func TestWaitLocked(t *testing.T) {
 	a := assert.New(t)
 	tl := &testLocker{}
@@ -142,11 +205,6 @@ func TestWaitLocked(t *testing.T) {
 		l.Unlock()
 	}
 	l.Hold()
-}
-
-func TestOverRelease(t *testing.T) {
-	a := assert.New(t)
-	a.PanicsWithError("latch was over-released", func() { New().Release() })
 }
 
 type testLocker struct {
